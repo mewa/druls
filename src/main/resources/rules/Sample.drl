@@ -1,0 +1,149 @@
+package com.sample
+
+import com.sample.Reservation;
+import java.util.Calendar;
+import java.text.SimpleDateFormat;
+
+rule "No class"
+    when
+        r : Reservation( carClass == null )
+    then
+    	r.carClass = Car.Klass.A;
+        System.out.println(r + " No class -> " + r.carClass);
+        update(r);
+end
+
+rule "Select wanted car"
+    when
+        r : Reservation( car == null && carClass != null)
+        c : Car ( available && klass == r.carClass )
+    then
+    	r.car = c;
+        System.out.println(r + " Select wanted car -> " + r.carClass);
+        c.available = false;
+        update(c);
+        update(r);
+end
+
+rule "Select better car"
+    when
+        r : Reservation( car == null && carClass != null)
+        not Car ( available && klass == r.carClass )
+        c : Car ( available && klass.ordinal() > r.carClass.ordinal() )
+    then
+    	r.car = c;
+        System.out.println(r + " Select better car -> " + r.car.klass);
+        c.available = false;
+        update(c);
+        update(r);
+end
+
+rule "Loyal customer discount"
+	when
+		r : Reservation( discount == null)
+	then
+		r.discount = r.client.type == Client.Type.LOYAL && r.numEq > 0;
+		System.out.println(r + " Loyal customer discount");
+		update(r);
+end
+
+rule "EqPrice"
+	when 
+		r : Reservation(discount != null && numEq > 0 && eqPrice == null)
+	then
+		int num = r.numEq;
+		if (r.discount)
+			--num;
+		r.eqPrice = 10.0f * (num);
+		System.out.println(r + " EqPrice " + r.eqPrice + ", discount: " + r.discount);
+		update(r)		
+end
+
+rule "Length"
+    when
+        r : Reservation ( length == null && startDate != null && endDate != null )
+    then
+    	long diff = r.endDate.getTimeInMillis() - r.startDate.getTimeInMillis();
+		r.length = diff / 1000 / 60 / 60 / 24 + 1;
+        System.out.println(r + " Length " + r.length);
+        update(r);
+end
+
+rule "ClassPrice"
+	when
+		r : Reservation( carClass != null && length != null && price == null )
+	then
+		r.price = Car.ClassPricing(r.carClass, r.length > 3);
+		System.out.println(r + " ClassPrice " + r.carClass + " = " + r.price);
+		update(r);
+end
+
+rule "DistancePrice"
+	when
+		r : Reservation( distancePrice == null && length != null )
+	then
+		r.distancePrice = Car.DistancePricing(r.length > 3);
+		System.out.println(r + " DistancePrice " + r.length + " days = " + r.distancePrice);
+		update(r);
+end
+
+rule "Reserve"
+	when
+		r : Reservation( !gone && car != null && distancePrice != null && length != null && price != null && eqPrice != null
+		&& startDate != null && endDate != null && discount != null)
+	then
+		SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+		System.out.println(r + " \t----Reservation ready----");
+		System.out.println(r + " \tClient: " + r.client);
+		System.out.println(r + " \tDesired car class: " + r.carClass);
+		System.out.println(r + " \tCar: " + r.car);
+		System.out.println(r + " \tFrom: " + sdf.format(r.startDate.getTimeInMillis()));
+		System.out.println(r + " \tTo: " + sdf.format(r.endDate.getTimeInMillis()));
+		System.out.println(r + " \tLength: " + r.length);
+		System.out.println(r + " \tPrice: " + (r.price + r.eqPrice));
+		System.out.println(r + " \tPrice/km: " + r.distancePrice);
+		System.out.println(r + " \tDiscount: " + r.discount);
+		System.out.println(r + " \t----------------------------");
+		r.gone = true;
+		update(r);
+end
+
+rule "Return"
+	when
+		r : Reservation( gone )
+		ret : ReservationReturn ( client == r.client )
+	then
+		SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+		System.out.println(r + " \t----Reservation----");
+		System.out.println(r + " \tClient: " + r.client);
+		System.out.println(r + " \tDesired car class: " + r.carClass);
+		System.out.println(r + " \tCar: " + r.car);
+		System.out.println(r + " \tFrom: " + sdf.format(r.startDate.getTimeInMillis()));
+		System.out.println(r + " \tTo: " + sdf.format(r.endDate.getTimeInMillis()));
+		System.out.println(r + " \tLength: " + r.length);
+		System.out.println(r + " \tPrice: " + (r.price + r.eqPrice));
+		System.out.println(r + " \tPrice/km: " + r.distancePrice);
+		System.out.println(r + " \tDiscount: " + r.discount);
+		System.out.println(r + " \t-----Return--------");
+				
+		long diff = ret.returnDate.getTimeInMillis() - r.endDate.getTimeInMillis();
+		long additionalLength = diff / 1000 / 60 / 60 / 24;
+		
+		ret.distancePriceTotal = r.distancePrice * ret.distance;
+		
+		float basePrice = r.price + r.eqPrice;
+		float additionalPrice = basePrice * 3 * additionalLength;
+		basePrice *= r.length;
+		
+		float damaged = ret.docsMissing * 500 + ret.capsMissing * 20;
+		
+		float total = ret.distancePriceTotal + basePrice + additionalPrice + damaged;
+		
+		System.out.println(r + " \tReturned: " + sdf.format(ret.returnDate.getTimeInMillis()));
+		System.out.println(r + " \tDistance: " + ret.distance );
+		System.out.println(r + " \tDocs missing: " + ret.docsMissing + " (+" + (ret.docsMissing * 500) + ")" );
+		System.out.println(r + " \tCaps missing: " + ret.capsMissing + " (+" + (ret.capsMissing * 20) + ")");
+		System.out.println(r + " \tLength: " + r.length + " (+" + additionalLength + ")" );
+		System.out.println(r + " \tPrice: " + basePrice + " + " + ret.distancePriceTotal + " (+" + additionalPrice + ") = " + total );
+		System.out.println(r + " \t----------------------------");
+end
